@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ngurahbas/Sanga/backend/internal/bootstrap"
 	"github.com/ngurahbas/Sanga/backend/internal/config"
 	"github.com/ngurahbas/Sanga/backend/internal/db"
 	httpapi "github.com/ngurahbas/Sanga/backend/internal/http"
@@ -27,6 +28,15 @@ func main() {
 		}
 	}
 
+	// Warn on silent data fork: default moved from data/sanga.db to ./sanga.db.
+	if cfg.DatabasePath == "./sanga.db" {
+		if _, err := os.Stat(cfg.DatabasePath); os.IsNotExist(err) {
+			if _, err2 := os.Stat("data/sanga.db"); err2 == nil {
+				log.Printf("warning: data/sanga.db exists but DATABASE_PATH is now %s; move it if you meant to keep existing data", cfg.DatabasePath)
+			}
+		}
+	}
+
 	database, err := db.Open(cfg.DatabasePath)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
@@ -35,6 +45,16 @@ func main() {
 
 	if err := db.Migrate(database); err != nil {
 		log.Fatalf("migrate db: %v", err)
+	}
+
+	res, err := bootstrap.EnsureAdmin(database, cfg.AdminKeyFile, cfg.RootUsername)
+	if err != nil {
+		log.Fatalf("bootstrap admin: %v", err)
+	}
+	if res.Created && !res.Imported {
+		// Secret lives only in the key file; surface path (never the secret) in logs.
+		// Result.Raw is available to callers/tests that need it once.
+		log.Printf("admin key written to %s (id=%s). Keep it secret.", res.KeyFile, res.KeyID)
 	}
 
 	srv := &http.Server{

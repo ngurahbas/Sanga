@@ -57,6 +57,21 @@ func parseTime(s sql.NullString) *time.Time {
 	return &t
 }
 
+// GenerateRaw creates a random "<id>.<secret>" without touching the DB.
+// The caller decides when to claim durable state (file) and when to store
+// the hash (ImportRawKey), so a failed file write never orphans a DB row.
+func GenerateRaw() (id, secret, raw string, err error) {
+	id, err = randB64(9) // 12 chars
+	if err != nil {
+		return "", "", "", err
+	}
+	secret, err = randB64(32) // 43 chars, ~256-bit
+	if err != nil {
+		return "", "", "", err
+	}
+	return id, secret, id + "." + secret, nil
+}
+
 // Issue creates a key for userID. Returns raw key once.
 // Raw format is "<id>.<secret>" where both parts are base64 RawURLEncoding
 // (alphabet A-Za-z0-9-_), so "." never appears inside either part and
@@ -65,11 +80,7 @@ func (s *Store) Issue(ctx context.Context, userID, name string) (*IssuedKey, err
 	if strings.TrimSpace(userID) == "" {
 		return nil, errors.New("user id required")
 	}
-	id, err := randB64(9) // 12 chars
-	if err != nil {
-		return nil, err
-	}
-	secret, err := randB64(32) // 43 chars, ~256-bit
+	id, secret, raw, err := GenerateRaw()
 	if err != nil {
 		return nil, err
 	}
@@ -85,8 +96,52 @@ func (s *Store) Issue(ctx context.Context, userID, name string) (*IssuedKey, err
 	t, _ := time.Parse(time.RFC3339Nano, now)
 	return &IssuedKey{
 		Key: Key{ID: id, UserID: userID, KeyPrefix: prefix, Name: name, CreatedAt: t},
-		Raw: id + "." + secret,
+		Raw: raw,
 	}, nil
+}
+
+// ValidateRaw checks "<id>.<secret>" shape and minimum entropy.
+// Both parts must be base64 RawURLEncoding; secret must be >= 32 chars (~192+ bits).
+func ValidateRaw(raw string) (id, secret string, err error) {
+	raw = strings.TrimSpace(raw)
+	id, secret, ok := strings.Cut(raw, ".")
+	if !ok || id == "" || secret == "" {
+		return "", "", errors.New("invalid api key format")
+	}
+	if len(id) < 8 {
+		return "", "", errors.New("invalid api key id")
+	}
+	if len(secret) < 32 {
+		return "", "", errors.New("api key secret too short")
+	}
+	for _, c := range id + secret {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return "", "", errors.New("invalid api key characters")
+		}
+	}
+	return id, secret, nil
+}
+
+// ImportRawKey stores a caller-provided "<id>.<secret>" for userID.
+// Used by bootstrap to import the key from the admin key file.
+func (s *Store) ImportRawKey(ctx context.Context, userID, raw, name string) (*Key, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, errors.New("user id required")
+	}
+	id, secret, err := ValidateRaw(raw)
+	if err != nil {
+		return nil, err
+	}
+	prefix := secret[:8]
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err = s.DB.ExecContext(ctx,
+		`INSERT INTO api_keys(id, user_id, key_hash, key_prefix, name, created_at) VALUES(?,?,?,?,?,?)`,
+		id, userID, hashSecret(secret), prefix, name, now)
+	if err != nil {
+		return nil, err
+	}
+	t, _ := time.Parse(time.RFC3339Nano, now)
+	return &Key{ID: id, UserID: userID, KeyPrefix: prefix, Name: name, CreatedAt: t}, nil
 }
 
 // Authenticate verifies "<id>.<secret>", checks revocation, bumps last_used_at.
