@@ -57,9 +57,12 @@ func main() {
 		log.Printf("admin key written to %s (id=%s). Keep it secret.", res.KeyFile, res.KeyID)
 	}
 
+	mux := httpapi.NewRouter()
+	httpapi.MountUsers(mux, database)
+
 	srv := &http.Server{
 		Addr:         cfg.Addr(),
-		Handler:      httpapi.NewRouter(),
+		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,

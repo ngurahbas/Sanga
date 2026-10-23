@@ -94,3 +94,52 @@ func (s *Store) ByUsername(ctx context.Context, username string) (*User, error) 
 	}
 	return &u, nil
 }
+
+// List returns users ordered by username, paginated.
+func (s *Store) List(ctx context.Context, limit, offset int) ([]*User, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT id, username, role, created_at, updated_at FROM users ORDER BY username LIMIT ? OFFSET ?`,
+		limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*User
+	for rows.Next() {
+		var u User
+		if err := scanUser(&u, rows); err != nil {
+			return nil, err
+		}
+		out = append(out, &u)
+	}
+	return out, rows.Err()
+}
+
+// Delete hard-deletes a user; api_keys cascade via FK.
+func (s *Store) Delete(ctx context.Context, id string) error {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// CountAdmins returns the number of users with role admin.
+func (s *Store) CountAdmins(ctx context.Context) (int, error) {
+	var n int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}

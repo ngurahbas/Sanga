@@ -15,6 +15,12 @@ const (
 
 var usernameRe = regexp.MustCompile(`^[a-z0-9_-]{3,32}$`)
 
+// Sentinel errors for validation. Handlers match with errors.Is.
+var (
+	ErrInvalidUsername = errors.New("username must be 3-32 chars of [a-z0-9_-]")
+	ErrInvalidRole     = errors.New("role must be admin, human, or agent")
+)
+
 // User is an identity. Credentials live in api_keys, not here.
 type User struct {
 	ID        string
@@ -29,22 +35,22 @@ func NormalizeUsername(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// ValidateUsername returns nil if ok.
+// ValidateUsername returns ErrInvalidUsername if invalid.
 func ValidateUsername(s string) error {
 	n := NormalizeUsername(s)
 	if !usernameRe.MatchString(n) {
-		return errors.New("username must be 3-32 chars of [a-z0-9_-]")
+		return ErrInvalidUsername
 	}
 	return nil
 }
 
-// ValidateRole returns nil if role is known. Empty means default human.
+// ValidateRole returns ErrInvalidRole if role is unknown. Empty means default human.
 func ValidateRole(role string) error {
 	switch role {
 	case "", RoleAdmin, RoleHuman, RoleAgent:
 		return nil
 	default:
-		return errors.New("role must be admin, human, or agent")
+		return ErrInvalidRole
 	}
 }
 
