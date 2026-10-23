@@ -33,6 +33,10 @@ func main() {
 	}
 	defer database.Close()
 
+	if err := db.Migrate(database); err != nil {
+		log.Fatalf("migrate db: %v", err)
+	}
+
 	srv := &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      httpapi.NewRouter(),
