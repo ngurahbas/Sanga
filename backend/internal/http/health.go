@@ -2,7 +2,6 @@ package http
 
 import "net/http"
 
-// HealthHandler reports liveness. No auth, no DB dependency.
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

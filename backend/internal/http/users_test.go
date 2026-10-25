@@ -78,24 +78,19 @@ func doReq(t *testing.T, mux *http.ServeMux, method, path, rawKey string, body a
 
 func TestCreateUserAdminOnly(t *testing.T) {
 	f := newFixture(t)
-	// Admin creates.
 	code, out := doReq(t, f.mux, "POST", "/users", f.adminRaw, map[string]string{"username": "agent-9", "role": "agent"})
 	if code != http.StatusCreated {
 		t.Fatalf("create = %d (%v), want 201", code, out)
 	}
-	// Duplicate.
 	if code, _ := doReq(t, f.mux, "POST", "/users", f.adminRaw, map[string]string{"username": "agent-9"}); code != http.StatusConflict {
 		t.Fatalf("duplicate = %d, want 409", code)
 	}
-	// Bad role.
 	if code, _ := doReq(t, f.mux, "POST", "/users", f.adminRaw, map[string]string{"username": "x1-y2", "role": "god"}); code != http.StatusBadRequest {
 		t.Fatalf("bad role = %d, want 400", code)
 	}
-	// Non-admin.
 	if code, _ := doReq(t, f.mux, "POST", "/users", f.humanRaw, map[string]string{"username": "zz-top"}); code != http.StatusForbidden {
 		t.Fatalf("human create = %d, want 403", code)
 	}
-	// No key.
 	if code, _ := doReq(t, f.mux, "POST", "/users", "", map[string]string{"username": "zz-top"}); code != http.StatusUnauthorized {
 		t.Fatalf("anon create = %d, want 401", code)
 	}
@@ -128,18 +123,15 @@ func TestListGetOpen(t *testing.T) {
 
 func TestDeleteUser(t *testing.T) {
 	f := newFixture(t)
-	// Non-admin cannot delete.
 	if code, _ := doReq(t, f.mux, "DELETE", "/users/"+f.human.ID, f.humanRaw, nil); code != http.StatusForbidden {
 		t.Fatalf("self delete = %d, want 403", code)
 	}
-	// Admin deletes human: human key must stop working.
 	if code, _ := doReq(t, f.mux, "DELETE", "/users/"+f.human.ID, f.adminRaw, nil); code != http.StatusNoContent {
 		t.Fatalf("delete = %d, want 204", code)
 	}
 	if code, _ := doReq(t, f.mux, "GET", "/users/me", f.humanRaw, nil); code != http.StatusUnauthorized {
 		t.Fatalf("deleted key = %d, want 401", code)
 	}
-	// Last admin cannot be deleted.
 	if code, _ := doReq(t, f.mux, "DELETE", "/users/"+f.admin.ID, f.adminRaw, nil); code != http.StatusConflict {
 		t.Fatalf("last admin = %d, want 409", code)
 	}
@@ -147,7 +139,6 @@ func TestDeleteUser(t *testing.T) {
 
 func TestIssueCapAndScope(t *testing.T) {
 	f := newFixture(t)
-	// Self issue works.
 	code, out := doReq(t, f.mux, "POST", "/users/"+f.human.ID+"/keys", f.humanRaw, map[string]string{"name": "extra"})
 	if code != http.StatusCreated {
 		t.Fatalf("self issue = %d (%v), want 201", code, out)
@@ -155,15 +146,12 @@ func TestIssueCapAndScope(t *testing.T) {
 	if out["raw"] == nil || len(out["raw"].(string)) < 20 {
 		t.Fatal("missing raw")
 	}
-	// Cross-user issue forbidden.
 	if code, _ := doReq(t, f.mux, "POST", "/users/"+f.admin.ID+"/keys", f.humanRaw, map[string]string{}); code != http.StatusForbidden {
 		t.Fatalf("cross issue = %d, want 403", code)
 	}
-	// Admin issues for human.
 	if code, _ := doReq(t, f.mux, "POST", "/users/"+f.human.ID+"/keys", f.adminRaw, map[string]string{}); code != http.StatusCreated {
 		t.Fatalf("admin issue = %d, want 201", code)
 	}
-	// Fill to cap (human now has 3 active: fixture + self + admin-issued).
 	for i := 0; i < 7; i++ {
 		if code, _ := doReq(t, f.mux, "POST", "/users/"+f.human.ID+"/keys", f.adminRaw, map[string]string{}); code != http.StatusCreated {
 			t.Fatalf("fill %d = %d, want 201", i, code)
@@ -176,13 +164,11 @@ func TestIssueCapAndScope(t *testing.T) {
 
 func TestRotateAtCap(t *testing.T) {
 	f := newFixture(t)
-	// Fill human to the cap (fixture key + 9 more = 10 active).
 	for i := 0; i < 9; i++ {
 		if code, _ := doReq(t, f.mux, "POST", "/users/"+f.human.ID+"/keys", f.adminRaw, map[string]string{}); code != http.StatusCreated {
 			t.Fatalf("fill %d = %d, want 201", i, code)
 		}
 	}
-	// Rotation is net-zero: must still succeed at cap.
 	oldRaw := f.humanRaw
 	code, out := doReq(t, f.mux, "POST", "/users/"+f.human.ID+"/keys/"+keyIDOf(t, oldRaw)+"/rotate", oldRaw, nil)
 	if code != http.StatusCreated {
@@ -195,12 +181,10 @@ func TestRotateAtCap(t *testing.T) {
 
 func TestRotateAndRevoke(t *testing.T) {
 	f := newFixture(t)
-	// List keys (metadata, no raw).
 	code, _ := doReq(t, f.mux, "GET", "/users/"+f.human.ID+"/keys", f.humanRaw, nil)
 	if code != http.StatusOK {
 		t.Fatalf("list keys = %d, want 200", code)
 	}
-	// Self rotate.
 	oldRaw := f.humanRaw
 	code, out := doReq(t, f.mux, "POST", "/users/"+f.human.ID+"/keys/"+keyIDOf(t, f.humanRaw)+"/rotate", f.humanRaw, map[string]string{})
 	if code != http.StatusCreated {
@@ -213,11 +197,9 @@ func TestRotateAndRevoke(t *testing.T) {
 	if code, _ := doReq(t, f.mux, "GET", "/users/me", newRaw, nil); code != http.StatusOK {
 		t.Fatalf("new key = %d, want 200", code)
 	}
-	// Cross-user rotate forbidden.
 	if code, _ := doReq(t, f.mux, "POST", "/users/"+f.admin.ID+"/keys/whatever/rotate", newRaw, map[string]string{}); code != http.StatusForbidden {
 		t.Fatalf("cross rotate = %d, want 403", code)
 	}
-	// Revoke self key, then double revoke -> 409.
 	kid := keyIDOf(t, newRaw)
 	if code, _ := doReq(t, f.mux, "DELETE", "/users/"+f.human.ID+"/keys/"+kid, newRaw, nil); code != http.StatusNoContent {
 		t.Fatalf("revoke = %d, want 204", code)
@@ -227,7 +209,6 @@ func TestRotateAndRevoke(t *testing.T) {
 	}
 }
 
-// keyIDOf parses "<id>.<secret>".
 func keyIDOf(t *testing.T, raw string) string {
 	t.Helper()
 	for i, c := range raw {

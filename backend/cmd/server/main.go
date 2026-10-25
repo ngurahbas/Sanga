@@ -19,7 +19,6 @@ import (
 func main() {
 	cfg := config.Load()
 
-	// Ensure parent dir exists for file-backed SQLite (skip for :memory:).
 	if cfg.DatabasePath != ":memory:" {
 		if dir := filepath.Dir(cfg.DatabasePath); dir != "." && dir != "" {
 			if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -28,7 +27,6 @@ func main() {
 		}
 	}
 
-	// Warn on silent data fork: default moved from data/sanga.db to ./sanga.db.
 	if cfg.DatabasePath == "./sanga.db" {
 		if _, err := os.Stat(cfg.DatabasePath); os.IsNotExist(err) {
 			if _, err2 := os.Stat("data/sanga.db"); err2 == nil {
@@ -52,13 +50,12 @@ func main() {
 		log.Fatalf("bootstrap admin: %v", err)
 	}
 	if res.Created && !res.Imported {
-		// Secret lives only in the key file; surface path (never the secret) in logs.
-		// Result.Raw is available to callers/tests that need it once.
 		log.Printf("admin key written to %s (id=%s). Keep it secret.", res.KeyFile, res.KeyID)
 	}
 
 	mux := httpapi.NewRouter()
 	httpapi.MountUsers(mux, database)
+	httpapi.MountDocs(mux, database)
 
 	srv := &http.Server{
 		Addr:         cfg.Addr(),

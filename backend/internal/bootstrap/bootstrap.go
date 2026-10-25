@@ -15,25 +15,14 @@ import (
 	"github.com/ngurahbas/Sanga/backend/internal/user"
 )
 
-// Result describes what EnsureAdmin did.
 type Result struct {
-	Created  bool // true if a new admin was bootstrapped
-	Imported bool // true if key came from existing file, false if generated
+	Created  bool
+	Imported bool
 	KeyID    string
-	Raw      string // set only when generated; import path does not echo file content
+	Raw      string
 	KeyFile  string
 }
 
-// EnsureAdmin creates the root admin iff no admin exists.
-//   - If an admin exists: no-op, ignores key file.
-//   - Else if keyFile exists: imports its "<id>.<secret>" for the root user.
-//   - Else: generates a key, writes raw to keyFile (0600, O_EXCL), then stores
-//     user + hash. File is claimed before any DB insert, so a failed write
-//     never orphans a DB row; a failed DB insert after a successful write
-//     heals on next restart via the import path.
-//
-// Refuses to silently promote a pre-existing non-admin with the root name:
-// pick a different SANGA_ROOT_USERNAME or promote manually.
 func EnsureAdmin(database *sql.DB, keyFilePath, rootUsername string) (*Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -55,7 +44,6 @@ func EnsureAdmin(database *sql.DB, keyFilePath, rootUsername string) (*Result, e
 	us := &user.Store{DB: database}
 	ks := &auth.Store{DB: database}
 
-	// Import path: file already exists.
 	if raw, err := readKeyFile(keyFilePath); err == nil {
 		u, created, err := ensureRootUser(ctx, us, rootUsername)
 		if err != nil {
@@ -77,13 +65,10 @@ func EnsureAdmin(database *sql.DB, keyFilePath, rootUsername string) (*Result, e
 		return nil, fmt.Errorf("read admin key file: %w", err)
 	}
 
-	// Generate path: pre-check name conflict before claiming the file,
-	// so a taken non-admin root name never leaves a stray key file.
 	if existing, err := us.ByUsername(ctx, rootUsername); err == nil && existing.Role != user.RoleAdmin {
 		return nil, fmt.Errorf("username %q exists as role %q: pick another SANGA_ROOT_USERNAME or promote it manually", rootUsername, existing.Role)
 	}
 
-	// Generate path: claim the file before touching the DB.
 	_, _, raw, err := auth.GenerateRaw()
 	if err != nil {
 		return nil, fmt.Errorf("generate admin key: %w", err)
@@ -93,7 +78,6 @@ func EnsureAdmin(database *sql.DB, keyFilePath, rootUsername string) (*Result, e
 	}
 	if err := writeKeyFileExclusive(keyFilePath, raw); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			// Lost the race: file appeared since the first read; import it.
 			if raw2, err2 := readKeyFile(keyFilePath); err2 == nil {
 				u, created, err := ensureRootUser(ctx, us, rootUsername)
 				if err != nil {
@@ -128,15 +112,12 @@ func EnsureAdmin(database *sql.DB, keyFilePath, rootUsername string) (*Result, e
 		if created {
 			deleteUser(ctx, database, u.ID)
 		}
-		// File holds a key not yet in the DB; next restart imports it.
 		return nil, fmt.Errorf("store admin key: %w (key file retained at %s, retry startup to import)", err, keyFilePath)
 	}
 	log.Printf("bootstrap: generated admin key id=%s user=%s file=%s", k.ID, rootUsername, keyFilePath)
 	return &Result{Created: true, Imported: false, KeyID: k.ID, Raw: raw, KeyFile: keyFilePath}, nil
 }
 
-// ensureRootUser returns (user, created, err). Never promotes: a pre-existing
-// non-admin with the root name is an error.
 func ensureRootUser(ctx context.Context, us *user.Store, rootUsername string) (*user.User, bool, error) {
 	if u, err := us.ByUsername(ctx, rootUsername); err == nil {
 		if u.Role != user.RoleAdmin {
@@ -146,7 +127,6 @@ func ensureRootUser(ctx context.Context, us *user.Store, rootUsername string) (*
 	}
 	u, err := us.Create(ctx, rootUsername, user.RoleAdmin)
 	if err != nil {
-		// Race: another instance created it.
 		if existing, err2 := us.ByUsername(ctx, rootUsername); err2 == nil {
 			if existing.Role != user.RoleAdmin {
 				return nil, false, fmt.Errorf("username %q exists as role %q: pick another SANGA_ROOT_USERNAME or promote it manually", rootUsername, existing.Role)

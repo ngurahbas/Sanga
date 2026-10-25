@@ -7,7 +7,6 @@ import (
 	"github.com/ngurahbas/Sanga/backend/internal/user"
 )
 
-// ctx keys (unexported to avoid collisions).
 type ctxKey int
 
 const (
@@ -15,8 +14,6 @@ const (
 	userKey
 )
 
-// WithAuth protects routes: validates API key, loads user, injects into context.
-// Health and other public routes bypass it by not using this middleware.
 func WithAuth(keys *Store, users *user.Store, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := FromRequest(r.Header.Get("X-API-Key"), r.Header.Get("Authorization"))
@@ -40,19 +37,16 @@ func WithAuth(keys *Store, users *user.Store, next http.Handler) http.Handler {
 	})
 }
 
-// KeyFromContext returns the authenticated key, if present.
 func KeyFromContext(ctx context.Context) (*Key, bool) {
 	k, ok := ctx.Value(keyInfoKey).(*Key)
 	return k, ok
 }
 
-// UserFromContext returns the authenticated user, if present.
 func UserFromContext(ctx context.Context) (*user.User, bool) {
 	u, ok := ctx.Value(userKey).(*user.User)
 	return u, ok
 }
 
-// RequireRole is a helper for handlers: true if user has one of the roles.
 func RequireRole(u *user.User, roles ...string) bool {
 	if u == nil {
 		return false

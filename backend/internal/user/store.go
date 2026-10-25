@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// Store wraps user persistence queries.
 type Store struct {
 	DB *sql.DB
 }
@@ -41,7 +40,6 @@ func scanUser(s *User, row interface {
 	return nil
 }
 
-// Create inserts a user. Returns the row.
 func (s *Store) Create(ctx context.Context, username, role string) (*User, error) {
 	if err := ValidateUsername(username); err != nil {
 		return nil, err
@@ -72,7 +70,6 @@ func (s *Store) Create(ctx context.Context, username, role string) (*User, error
 	return u, nil
 }
 
-// ByID fetches a user by id.
 func (s *Store) ByID(ctx context.Context, id string) (*User, error) {
 	var u User
 	err := scanUser(&u, s.DB.QueryRowContext(ctx,
@@ -83,7 +80,6 @@ func (s *Store) ByID(ctx context.Context, id string) (*User, error) {
 	return &u, nil
 }
 
-// ByUsername fetches a user case-insensitively (SQLite NOCASE).
 func (s *Store) ByUsername(ctx context.Context, username string) (*User, error) {
 	var u User
 	err := scanUser(&u, s.DB.QueryRowContext(ctx,
@@ -95,7 +91,6 @@ func (s *Store) ByUsername(ctx context.Context, username string) (*User, error) 
 	return &u, nil
 }
 
-// List returns users ordered by username, paginated.
 func (s *Store) List(ctx context.Context, limit, offset int) ([]*User, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
@@ -121,7 +116,6 @@ func (s *Store) List(ctx context.Context, limit, offset int) ([]*User, error) {
 	return out, rows.Err()
 }
 
-// Delete hard-deletes a user; api_keys cascade via FK.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	res, err := s.DB.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
 	if err != nil {
@@ -134,7 +128,6 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-// CountAdmins returns the number of users with role admin.
 func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 	var n int
 	if err := s.DB.QueryRowContext(ctx,

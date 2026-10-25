@@ -46,13 +46,11 @@ func TestGenerateWritesFile(t *testing.T) {
 		t.Fatalf("mode = %o, want 600", fi.Mode().Perm())
 	}
 
-	// Generated key must authenticate.
 	ks := &auth.Store{DB: database}
 	if _, err := ks.Authenticate(context.Background(), res.Raw); err != nil {
 		t.Fatalf("authenticate generated: %v", err)
 	}
 
-	// Second run is a no-op (admin now exists), even with file present.
 	res2, err := EnsureAdmin(database, keyFile, "root")
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +61,6 @@ func TestGenerateWritesFile(t *testing.T) {
 }
 
 func TestImportExistingFile(t *testing.T) {
-	// Make a valid raw key from a scratch DB.
 	src, err := db.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +80,6 @@ func TestImportExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Fresh DB imports that raw from file.
 	database, err := db.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +134,7 @@ func TestNoOpWhenAdminExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keyFile := filepath.Join(t.TempDir(), "admin.key") // does not exist
+	keyFile := filepath.Join(t.TempDir(), "admin.key")
 	res, err := EnsureAdmin(database, keyFile, "root")
 	if err != nil {
 		t.Fatal(err)

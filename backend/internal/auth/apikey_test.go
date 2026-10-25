@@ -34,7 +34,6 @@ func TestIssueAuthenticateRevoke(t *testing.T) {
 		t.Fatal("expected raw key")
 	}
 
-	// Raw must contain id prefix; stored row must not contain raw.
 	if len(issued.KeyPrefix) != 8 {
 		t.Fatalf("prefix len = %d, want 8", len(issued.KeyPrefix))
 	}
@@ -47,12 +46,10 @@ func TestIssueAuthenticateRevoke(t *testing.T) {
 		t.Fatal("wrong user")
 	}
 
-	// Wrong secret fails.
 	if _, err := ks.Authenticate(ctx, issued.Key.ID+".wrong"); err == nil {
 		t.Fatal("expected auth failure")
 	}
 
-	// Revoke then auth fails.
 	if err := ks.Revoke(ctx, issued.Key.ID); err != nil {
 		t.Fatal(err)
 	}

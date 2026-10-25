@@ -14,16 +14,13 @@ import (
 	"github.com/ngurahbas/Sanga/backend/internal/user"
 )
 
-// MaxActiveKeys caps active (non-revoked) keys per user.
 const MaxActiveKeys = 10
 
-// UsersHandler serves /users endpoints. Mount via MountUsers.
 type UsersHandler struct {
 	users *user.Store
 	keys  *auth.Store
 }
 
-// MountUsers wires /users routes onto mux. All require auth; /health stays public.
 func MountUsers(mux *http.ServeMux, database *sql.DB) {
 	h := &UsersHandler{users: &user.Store{DB: database}, keys: &auth.Store{DB: database}}
 	authed := func(pattern string, fn http.HandlerFunc) {
@@ -93,7 +90,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		if err == io.EOF {
-			return true // empty body: leave v at zero value
+			return true
 		}
 		writeErr(w, http.StatusBadRequest, "invalid JSON body")
 		return false
@@ -105,7 +102,6 @@ func caller(r *http.Request) (*user.User, bool) {
 	return auth.UserFromContext(r.Context())
 }
 
-// selfOrAdmin: admins act on anyone; others only on themselves.
 func selfOrAdmin(c *user.User, targetID string) bool {
 	if auth.RequireRole(c, user.RoleAdmin) {
 		return true
@@ -117,7 +113,6 @@ func isDuplicate(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
 }
 
-// POST /users — admin only.
 func (h *UsersHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	c, ok := caller(r)
 	if !ok || !auth.RequireRole(c, user.RoleAdmin) {
@@ -147,7 +142,6 @@ func (h *UsersHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toUserJSON(u))
 }
 
-// GET /users — any authed user.
 func (h *UsersHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	if _, ok := caller(r); !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
@@ -168,7 +162,6 @@ func (h *UsersHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// GET /users/me — own profile + active key count.
 func (h *UsersHandler) me(w http.ResponseWriter, r *http.Request) {
 	c, ok := caller(r)
 	if !ok {
@@ -183,7 +176,6 @@ func (h *UsersHandler) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": toUserJSON(c), "active_keys": n})
 }
 
-// GET /users/{id} — any authed user.
 func (h *UsersHandler) getUser(w http.ResponseWriter, r *http.Request) {
 	if _, ok := caller(r); !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
@@ -197,7 +189,6 @@ func (h *UsersHandler) getUser(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toUserJSON(u))
 }
 
-// DELETE /users/{id} — admin only, hard delete (keys cascade). Refuses last admin.
 func (h *UsersHandler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	c, ok := caller(r)
 	if !ok || !auth.RequireRole(c, user.RoleAdmin) {
@@ -228,7 +219,6 @@ func (h *UsersHandler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// POST /users/{id}/keys — admin any, self own. Cap MaxActiveKeys.
 func (h *UsersHandler) issueKey(w http.ResponseWriter, r *http.Request) {
 	c, ok := caller(r)
 	if !ok {
@@ -268,7 +258,6 @@ func (h *UsersHandler) issueKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"key": out, "raw": issued.Raw})
 }
 
-// GET /users/{id}/keys — any authed user. Metadata only.
 func (h *UsersHandler) listKeys(w http.ResponseWriter, r *http.Request) {
 	if _, ok := caller(r); !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
@@ -291,7 +280,6 @@ func (h *UsersHandler) listKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// POST /users/{id}/keys/{keyID}/rotate — admin any, self own.
 func (h *UsersHandler) rotateKey(w http.ResponseWriter, r *http.Request) {
 	c, ok := caller(r)
 	if !ok {
@@ -320,7 +308,6 @@ func (h *UsersHandler) rotateKey(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	// Name is optional: an empty body keeps the old name.
 	if !decodeJSON(w, r, &body) {
 		return
 	}
@@ -340,7 +327,6 @@ func (h *UsersHandler) rotateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n > MaxActiveKeys {
-		// Over cap (should not happen): rotation is net-zero, so at-cap rotates fine.
 		writeErr(w, http.StatusConflict, "key limit reached")
 		return
 	}
@@ -361,7 +347,6 @@ func (h *UsersHandler) rotateKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"key": out, "raw": rotated.Raw})
 }
 
-// DELETE /users/{id}/keys/{keyID} — admin any, self own. Revokes the key.
 func (h *UsersHandler) revokeKey(w http.ResponseWriter, r *http.Request) {
 	c, ok := caller(r)
 	if !ok {

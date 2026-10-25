@@ -5,7 +5,6 @@ import (
 	"strconv"
 )
 
-// Config holds server runtime settings from env.
 type Config struct {
 	Port         int
 	DatabasePath string
@@ -13,11 +12,6 @@ type Config struct {
 	RootUsername string
 }
 
-// Load reads env with sane defaults.
-// PORT: (default 8080)
-// DATABASE_PATH: (default "./sanga.db")
-// SANGA_ADMIN_KEY_FILE: (default "./admin.key")
-// SANGA_ROOT_USERNAME: (default "root")
 func Load() Config {
 	port := 8080
 	if v := os.Getenv("PORT"); v != "" {
@@ -49,7 +43,6 @@ func Load() Config {
 	}
 }
 
-// Addr returns ":<port>" for net/http.
 func (c Config) Addr() string {
 	return ":" + strconv.Itoa(c.Port)
 }

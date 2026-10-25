@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// Key record mirrors api_keys row (without raw secret).
 type Key struct {
 	ID         string
 	UserID     string
@@ -23,10 +22,9 @@ type Key struct {
 	CreatedAt  time.Time
 }
 
-// IssuedKey is returned once at creation: Raw is the only time the secret is visible.
 type IssuedKey struct {
 	Key
-	Raw string // "<id>.<secret>" — store nowhere, show once
+	Raw string
 }
 
 type Store struct {
@@ -57,25 +55,18 @@ func parseTime(s sql.NullString) *time.Time {
 	return &t
 }
 
-// GenerateRaw creates a random "<id>.<secret>" without touching the DB.
-// The caller decides when to claim durable state (file) and when to store
-// the hash (ImportRawKey), so a failed file write never orphans a DB row.
 func GenerateRaw() (id, secret, raw string, err error) {
-	id, err = randB64(9) // 12 chars
+	id, err = randB64(9)
 	if err != nil {
 		return "", "", "", err
 	}
-	secret, err = randB64(32) // 43 chars, ~256-bit
+	secret, err = randB64(32)
 	if err != nil {
 		return "", "", "", err
 	}
 	return id, secret, id + "." + secret, nil
 }
 
-// Issue creates a key for userID. Returns raw key once.
-// Raw format is "<id>.<secret>" where both parts are base64 RawURLEncoding
-// (alphabet A-Za-z0-9-_), so "." never appears inside either part and
-// strings.Cut on "." is safe.
 func (s *Store) Issue(ctx context.Context, userID, name string) (*IssuedKey, error) {
 	if strings.TrimSpace(userID) == "" {
 		return nil, errors.New("user id required")
@@ -100,8 +91,6 @@ func (s *Store) Issue(ctx context.Context, userID, name string) (*IssuedKey, err
 	}, nil
 }
 
-// ValidateRaw checks "<id>.<secret>" shape and minimum entropy.
-// Both parts must be base64 RawURLEncoding; secret must be >= 32 chars (~192+ bits).
 func ValidateRaw(raw string) (id, secret string, err error) {
 	raw = strings.TrimSpace(raw)
 	id, secret, ok := strings.Cut(raw, ".")
@@ -122,8 +111,6 @@ func ValidateRaw(raw string) (id, secret string, err error) {
 	return id, secret, nil
 }
 
-// ImportRawKey stores a caller-provided "<id>.<secret>" for userID.
-// Used by bootstrap to import the key from the admin key file.
 func (s *Store) ImportRawKey(ctx context.Context, userID, raw, name string) (*Key, error) {
 	if strings.TrimSpace(userID) == "" {
 		return nil, errors.New("user id required")
@@ -144,8 +131,6 @@ func (s *Store) ImportRawKey(ctx context.Context, userID, raw, name string) (*Ke
 	return &Key{ID: id, UserID: userID, KeyPrefix: prefix, Name: name, CreatedAt: t}, nil
 }
 
-// Authenticate verifies "<id>.<secret>", checks revocation, bumps last_used_at.
-// Returns key + user role lookup is left to caller via user Store.
 func (s *Store) Authenticate(ctx context.Context, raw string) (*Key, error) {
 	id, secret, ok := strings.Cut(strings.TrimSpace(raw), ".")
 	if !ok || id == "" || secret == "" {
@@ -183,7 +168,6 @@ func (s *Store) Authenticate(ctx context.Context, raw string) (*Key, error) {
 	return &k, nil
 }
 
-// Revoke sets revoked_at. Returns error if the key is not found or already revoked.
 func (s *Store) Revoke(ctx context.Context, id string) error {
 	res, err := s.DB.ExecContext(ctx,
 		`UPDATE api_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL`,
@@ -198,7 +182,6 @@ func (s *Store) Revoke(ctx context.Context, id string) error {
 	return nil
 }
 
-// OwnerOf returns the user_id holding key id, or "" if the key is unknown.
 func (s *Store) OwnerOf(ctx context.Context, id string) (string, error) {
 	var userID string
 	if err := s.DB.QueryRowContext(ctx,
@@ -211,7 +194,6 @@ func (s *Store) OwnerOf(ctx context.Context, id string) (string, error) {
 	return userID, nil
 }
 
-// ListByUser returns key metadata for a user, newest first. Never includes secrets.
 func (s *Store) ListByUser(ctx context.Context, userID string) ([]*Key, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT id, user_id, key_prefix, name, revoked_at, last_used_at, created_at
@@ -241,7 +223,6 @@ func (s *Store) ListByUser(ctx context.Context, userID string) ([]*Key, error) {
 	return out, rows.Err()
 }
 
-// ActiveCount counts non-revoked keys for a user.
 func (s *Store) ActiveCount(ctx context.Context, userID string) (int, error) {
 	var n int
 	if err := s.DB.QueryRowContext(ctx,
@@ -251,8 +232,6 @@ func (s *Store) ActiveCount(ctx context.Context, userID string) (int, error) {
 	return n, nil
 }
 
-// Rotate issues a replacement for oldID and revokes oldID atomically.
-// Returns the new key (raw shown once). Old key must belong to userID and be active.
 func (s *Store) Rotate(ctx context.Context, userID, oldID, name string) (*IssuedKey, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -297,12 +276,10 @@ func (s *Store) Rotate(ctx context.Context, userID, oldID, name string) (*Issued
 	}, nil
 }
 
-// FromRequest extracts key from X-API-Key or Authorization: Bearer (scheme case-insensitive).
 func FromRequest(apiKeyHeader, authHeader string) string {
 	if apiKeyHeader != "" {
 		return strings.TrimSpace(apiKeyHeader)
 	}
-	// Scheme per RFC 7235 is case-insensitive; value may be "Bearer", "bearer", etc.
 	parts := strings.SplitN(authHeader, " ", 2)
 	if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[0]), "bearer") {
 		return strings.TrimSpace(parts[1])
