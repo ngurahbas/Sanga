@@ -1,0 +1,220 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/ngurahbas/Sanga/core/internal/auth"
+	"github.com/ngurahbas/Sanga/core/internal/db"
+	"github.com/ngurahbas/Sanga/core/internal/user"
+)
+
+type fixture struct {
+	mux      *http.ServeMux
+	admin    *user.User
+	human    *user.User
+	adminRaw string
+	humanRaw string
+}
+
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := db.Migrate(database); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	us := user.NewStore(database)
+	ks := auth.NewStore(database)
+	admin, err := us.Create(ctx, "admin1", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	human, err := us.Create(ctx, "human1", "human")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aIssued, err := ks.Issue(ctx, admin.ID, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hIssued, err := ks.Issue(ctx, human.ID, "h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := NewRouter(database)
+	return &fixture{mux, admin, human, aIssued.Raw, hIssued.Raw}
+}
+
+func doReq(t *testing.T, mux *http.ServeMux, method, path, rawKey string, body any) (int, map[string]any) {
+	t.Helper()
+	var rdr io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rdr = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, rdr)
+	if rawKey != "" {
+		req.Header.Set("X-API-Key", rawKey)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	res := rec.Result()
+	defer res.Body.Close()
+	var out map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&out)
+	return res.StatusCode, out
+}
+
+func TestCreateUserAdminOnly(t *testing.T) {
+	f := newFixture(t)
+	code, out := doReq(t, f.mux, "POST", "/api/users", f.adminRaw, map[string]string{"username": "agent-9", "role": "agent"})
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d (%v), want 201", code, out)
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users", f.adminRaw, map[string]string{"username": "agent-9"}); code != http.StatusConflict {
+		t.Fatalf("duplicate = %d, want 409", code)
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users", f.adminRaw, map[string]string{"username": "x1-y2", "role": "god"}); code != http.StatusBadRequest {
+		t.Fatalf("bad role = %d, want 400", code)
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users", f.humanRaw, map[string]string{"username": "zz-top"}); code != http.StatusForbidden {
+		t.Fatalf("human create = %d, want 403", code)
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users", "", map[string]string{"username": "zz-top"}); code != http.StatusUnauthorized {
+		t.Fatalf("anon create = %d, want 401", code)
+	}
+}
+
+func TestListGetOpen(t *testing.T) {
+	f := newFixture(t)
+	if code, _ := doReq(t, f.mux, "GET", "/api/users", f.humanRaw, nil); code != http.StatusOK {
+		t.Fatalf("list = %d, want 200", code)
+	}
+	if code, _ := doReq(t, f.mux, "GET", "/api/users/"+f.admin.ID, f.humanRaw, nil); code != http.StatusOK {
+		t.Fatalf("get other = %d, want 200", code)
+	}
+	if code, _ := doReq(t, f.mux, "GET", "/api/users/me", f.humanRaw, nil); code != http.StatusOK {
+		t.Fatalf("me = %d, want 200", code)
+	}
+	if code, out := doReq(t, f.mux, "GET", "/api/users/me", f.humanRaw, nil); code == http.StatusOK {
+		u := out["user"].(map[string]any)
+		if u["username"] != "human1" || out["active_keys"].(float64) != 1 {
+			t.Fatalf("me = %v", out)
+		}
+	}
+	if code, _ := doReq(t, f.mux, "GET", "/api/users", "", nil); code != http.StatusUnauthorized {
+		t.Fatalf("anon list = %d, want 401", code)
+	}
+	if code, _ := doReq(t, f.mux, "GET", "/api/users/nope", f.humanRaw, nil); code != http.StatusNotFound {
+		t.Fatalf("missing = %d, want 404", code)
+	}
+}
+
+func TestDeleteUser(t *testing.T) {
+	f := newFixture(t)
+	if code, _ := doReq(t, f.mux, "DELETE", "/api/users/"+f.human.ID, f.humanRaw, nil); code != http.StatusForbidden {
+		t.Fatalf("self delete = %d, want 403", code)
+	}
+	if code, _ := doReq(t, f.mux, "DELETE", "/api/users/"+f.human.ID, f.adminRaw, nil); code != http.StatusNoContent {
+		t.Fatalf("delete = %d, want 204", code)
+	}
+	if code, _ := doReq(t, f.mux, "GET", "/api/users/me", f.humanRaw, nil); code != http.StatusUnauthorized {
+		t.Fatalf("deleted key = %d, want 401", code)
+	}
+	if code, _ := doReq(t, f.mux, "DELETE", "/api/users/"+f.admin.ID, f.adminRaw, nil); code != http.StatusConflict {
+		t.Fatalf("last admin = %d, want 409", code)
+	}
+}
+
+func TestIssueCapAndScope(t *testing.T) {
+	f := newFixture(t)
+	code, out := doReq(t, f.mux, "POST", "/api/users/"+f.human.ID+"/keys", f.humanRaw, map[string]string{"name": "extra"})
+	if code != http.StatusCreated {
+		t.Fatalf("self issue = %d (%v), want 201", code, out)
+	}
+	if out["raw"] == nil || len(out["raw"].(string)) < 20 {
+		t.Fatal("missing raw")
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users/"+f.admin.ID+"/keys", f.humanRaw, map[string]string{}); code != http.StatusForbidden {
+		t.Fatalf("cross issue = %d, want 403", code)
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users/"+f.human.ID+"/keys", f.adminRaw, map[string]string{}); code != http.StatusCreated {
+		t.Fatalf("admin issue = %d, want 201", code)
+	}
+	for i := 0; i < 7; i++ {
+		if code, _ := doReq(t, f.mux, "POST", "/api/users/"+f.human.ID+"/keys", f.adminRaw, map[string]string{}); code != http.StatusCreated {
+			t.Fatalf("fill %d = %d, want 201", i, code)
+		}
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users/"+f.human.ID+"/keys", f.adminRaw, map[string]string{}); code != http.StatusConflict {
+		t.Fatalf("over cap = %d, want 409", code)
+	}
+}
+
+func TestRotateAtCap(t *testing.T) {
+	f := newFixture(t)
+	for i := 0; i < 9; i++ {
+		if code, _ := doReq(t, f.mux, "POST", "/api/users/"+f.human.ID+"/keys", f.adminRaw, map[string]string{}); code != http.StatusCreated {
+			t.Fatalf("fill %d = %d, want 201", i, code)
+		}
+	}
+	oldRaw := f.humanRaw
+	code, out := doReq(t, f.mux, "POST", "/api/users/"+f.human.ID+"/keys/"+keyIDOf(t, oldRaw)+"/rotate", oldRaw, nil)
+	if code != http.StatusCreated {
+		t.Fatalf("rotate at cap = %d (%v), want 201", code, out)
+	}
+	if code, _ := doReq(t, f.mux, "GET", "/api/users/me", oldRaw, nil); code != http.StatusUnauthorized {
+		t.Fatalf("old key = %d, want 401", code)
+	}
+}
+
+func TestRotateAndRevoke(t *testing.T) {
+	f := newFixture(t)
+	code, _ := doReq(t, f.mux, "GET", "/api/users/"+f.human.ID+"/keys", f.humanRaw, nil)
+	if code != http.StatusOK {
+		t.Fatalf("list keys = %d, want 200", code)
+	}
+	oldRaw := f.humanRaw
+	code, out := doReq(t, f.mux, "POST", "/api/users/"+f.human.ID+"/keys/"+keyIDOf(t, f.humanRaw)+"/rotate", f.humanRaw, map[string]string{})
+	if code != http.StatusCreated {
+		t.Fatalf("rotate = %d (%v), want 201", code, out)
+	}
+	newRaw := out["raw"].(string)
+	if code, _ := doReq(t, f.mux, "GET", "/api/users/me", oldRaw, nil); code != http.StatusUnauthorized {
+		t.Fatalf("old key = %d, want 401", code)
+	}
+	if code, _ := doReq(t, f.mux, "GET", "/api/users/me", newRaw, nil); code != http.StatusOK {
+		t.Fatalf("new key = %d, want 200", code)
+	}
+	if code, _ := doReq(t, f.mux, "POST", "/api/users/"+f.admin.ID+"/keys/whatever/rotate", newRaw, map[string]string{}); code != http.StatusForbidden {
+		t.Fatalf("cross rotate = %d, want 403", code)
+	}
+	kid := keyIDOf(t, newRaw)
+	if code, _ := doReq(t, f.mux, "DELETE", "/api/users/"+f.human.ID+"/keys/"+kid, newRaw, nil); code != http.StatusNoContent {
+		t.Fatalf("revoke = %d, want 204", code)
+	}
+	if code, _ := doReq(t, f.mux, "DELETE", "/api/users/"+f.human.ID+"/keys/"+kid, f.adminRaw, nil); code != http.StatusConflict {
+		t.Fatalf("double revoke = %d, want 409", code)
+	}
+}
+
+func keyIDOf(t *testing.T, raw string) string {
+	t.Helper()
+	for i, c := range raw {
+		if c == '.' {
+			return raw[:i]
+		}
+	}
+	t.Fatal("bad raw")
+	return ""
+}

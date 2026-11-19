@@ -6,5 +6,5 @@ comment rules:
 - Prefer renaming, extracting a function, or narrowing scope over commenting.
 
 Subprojects:
-- [`backend/AGENTS.md`](backend/AGENTS.md)
+- [`core/AGENTS.md`](core/AGENTS.md)
 
